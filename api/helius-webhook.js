@@ -1,4 +1,5 @@
 const axios = require("axios");
+const { TwitterApi } = require("twitter-api-v2");
 
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY || process.env.API_Key;
 const MADLADS_ROYALTY_ADDRESS = "2RtGg6fsFiiF1EQzHqbd66AhW7R5bWeQGpTbv2UMkCdW";
@@ -7,8 +8,36 @@ const ALLOWED_SOURCES = new Set(["MAGIC_EDEN", "TENSOR"]);
 const assetCache = new Map();
 const processedSignatures = new Set();
 const MAX_SIGNATURE_CACHE = 1000;
+let twitterRwClient = null;
+let twitterClient = null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getTwitterClients = () => {
+  if (twitterRwClient && twitterClient) {
+    return { twitterClient, twitterRwClient };
+  }
+
+  const appKey = process.env.API_Key;
+  const appSecret = process.env.API_Secret;
+  const accessToken = process.env.Access_Token;
+  const accessSecret = process.env.Access_Token_Secret;
+
+  if (!appKey || !appSecret || !accessToken || !accessSecret) {
+    throw new Error(
+      "Missing Twitter credentials (API_Key, API_Secret, Access_Token, Access_Token_Secret)."
+    );
+  }
+
+  twitterClient = new TwitterApi({
+    appKey,
+    appSecret,
+    accessToken,
+    accessSecret,
+  });
+  twitterRwClient = twitterClient.readWrite;
+  return { twitterClient, twitterRwClient };
+};
 
 const inferAmountLamports = (transaction) => {
   const eventAmount = Number(transaction?.events?.nft?.amount || 0);
@@ -134,6 +163,39 @@ const trimSignatureCache = () => {
   }
 };
 
+const postSaleTweet = async (sale) => {
+  const { twitterRwClient: rwClient, twitterClient: rawClient } = getTwitterClients();
+
+  const tweetText =
+    sale.id !== "Unknown"
+      ? `Mad Lads #${sale.id} sold for ◎${sale.price} on ${sale.marketplace}.`
+      : `Mad Lads sold for ◎${sale.price} on ${sale.marketplace}.`;
+
+  try {
+    if (sale.image && sale.image !== "unknown") {
+      const imageResponse = await axios.get(sale.image, {
+        responseType: "arraybuffer",
+        timeout: 12000,
+      });
+      const mediaId = await rawClient.v1.uploadMedia(Buffer.from(imageResponse.data), {
+        mimeType: "image/png",
+      });
+
+      await rwClient.v2.tweet({
+        text: tweetText,
+        media: { media_ids: [mediaId] },
+      });
+      console.log(`[tweet] posted with image for ${sale.signature}`);
+      return;
+    }
+
+    await rwClient.v2.tweet({ text: tweetText });
+    console.log(`[tweet] posted text-only for ${sale.signature}`);
+  } catch (error) {
+    console.error("[tweet] failed:", error?.data || error?.message || error);
+  }
+};
+
 const processWebhookEvent = async (tx) => {
   const source = tx?.source;
   if (!ALLOWED_SOURCES.has(source)) return false;
@@ -151,7 +213,9 @@ const processWebhookEvent = async (tx) => {
   console.log(`Madlads #${sale.id}`);
   console.log(`Sold for ${sale.price} on ${sale.marketplace}`);
   console.log(`image ${sale.image}`);
-  console.log(`tx https://solscan.io/tx/${sale.signature}\n`);
+  console.log("");
+
+  await postSaleTweet(sale);
   return true;
 };
 
