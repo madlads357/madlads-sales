@@ -66,4 +66,4 @@ Then call:
 ## Notes
 
 - Helius can retry failed deliveries; duplicate events are expected.
-- Webhook events consume Helius credits.
+- Webhook events consume 1 Helius credits.
