@@ -136,14 +136,14 @@ const trimSignatureCache = () => {
 
 const processWebhookEvent = async (tx) => {
   const source = tx?.source;
-  if (!ALLOWED_SOURCES.has(source)) return;
+  if (!ALLOWED_SOURCES.has(source)) return false;
 
   const signature = tx?.signature;
-  if (!signature || processedSignatures.has(signature)) return;
+  if (!signature || processedSignatures.has(signature)) return false;
 
   const platformLabel = source === "MAGIC_EDEN" ? "Magic Eden" : "Tensor";
   const sale = await buildSaleRecord(tx, platformLabel, source);
-  if (!sale) return;
+  if (!sale) return false;
 
   processedSignatures.add(signature);
   trimSignatureCache();
@@ -152,6 +152,7 @@ const processWebhookEvent = async (tx) => {
   console.log(`Sold for ${sale.price} on ${sale.marketplace}`);
   console.log(`image ${sale.image}`);
   console.log(`tx https://solscan.io/tx/${sale.signature}\n`);
+  return true;
 };
 
 module.exports = async function handler(req, res) {
@@ -161,17 +162,27 @@ module.exports = async function handler(req, res) {
 
   const payload = req.body;
   const events = Array.isArray(payload) ? payload : payload ? [payload] : [];
+  console.log(
+    `[webhook] request received: count=${events.length}, sources=${events
+      .map((e) => e?.source || "unknown")
+      .join(",")}`
+  );
+
   if (events.length === 0) {
     return res.status(200).json({ received: 0 });
   }
 
+  let processed = 0;
   for (const tx of events) {
     try {
-      await processWebhookEvent(tx);
+      const ok = await processWebhookEvent(tx);
+      if (ok) processed += 1;
     } catch (error) {
       console.error("Webhook event processing error:", error?.message || error);
     }
   }
 
-  return res.status(200).json({ received: events.length });
+  const ignored = events.length - processed;
+  console.log(`[webhook] processed=${processed}, ignored=${ignored}`);
+  return res.status(200).json({ received: events.length, processed, ignored });
 };
