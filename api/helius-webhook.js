@@ -166,10 +166,8 @@ const trimSignatureCache = () => {
 const postSaleTweet = async (sale) => {
   const { twitterRwClient: rwClient, twitterClient: rawClient } = getTwitterClients();
 
-  const tweetText =
-    sale.id !== "Unknown"
-      ? `Mad Lads #${sale.id} sold for ◎${sale.price} on ${sale.marketplace}.`
-      : `Mad Lads sold for ◎${sale.price} on ${sale.marketplace}.`;
+  const headline = sale.id !== "Unknown" ? `Mad Lads #${sale.id}` : "Mad Lads";
+  const tweetText = `${headline}\n\nSold for ◎${sale.price} on ${sale.marketplace}\n\n@madlads #MadLads`;
 
   try {
     if (sale.image && sale.image !== "unknown") {
@@ -209,11 +207,6 @@ const processWebhookEvent = async (tx) => {
 
   processedSignatures.add(signature);
   trimSignatureCache();
-
-  console.log(`Madlads #${sale.id}`);
-  console.log(`Sold for ${sale.price} on ${sale.marketplace}`);
-  console.log(`image ${sale.image}`);
-  console.log("");
 
   await postSaleTweet(sale);
   return true;
