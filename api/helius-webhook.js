@@ -139,20 +139,27 @@ const resolveMadLadsInfo = async (transaction, platformKey) => {
 const buildSaleRecord = async (transaction, platformLabel, platformKey) => {
   const event = transaction?.events?.nft;
   const type = transaction?.type || event?.type;
-  if (type !== "NFT_SALE" && event?.type !== "NFT_SALE") return null;
+  if (type !== "NFT_SALE" && event?.type !== "NFT_SALE") {
+    return { sale: null, ignoreReason: "not_nft_sale" };
+  }
 
   const madLadsInfo = await resolveMadLadsInfo(transaction, platformKey);
-  if (!madLadsInfo) return null;
+  if (!madLadsInfo) {
+    return { sale: null, ignoreReason: "not_mad_lads" };
+  }
 
   const amountLamports = inferAmountLamports(transaction);
   const amountSol = amountLamports > 0 ? amountLamports / 1_000_000_000 : Number.NaN;
 
   return {
-    signature: transaction?.signature || "",
-    id: madLadsInfo.id,
-    price: Number.isFinite(amountSol) ? amountSol.toFixed(2) : "unknown",
-    marketplace: platformLabel,
-    image: madLadsInfo.image,
+    sale: {
+      signature: transaction?.signature || "",
+      id: madLadsInfo.id,
+      price: Number.isFinite(amountSol) ? amountSol.toFixed(2) : "unknown",
+      marketplace: platformLabel,
+      image: madLadsInfo.image,
+    },
+    ignoreReason: null,
   };
 };
 
@@ -196,20 +203,33 @@ const postSaleTweet = async (sale) => {
 
 const processWebhookEvent = async (tx) => {
   const source = tx?.source;
-  if (!ALLOWED_SOURCES.has(source)) return false;
+  if (!ALLOWED_SOURCES.has(source)) {
+    console.log(`[ignore] reason=wrong_source source=${source || "missing"}`);
+    return { processed: false, reason: "wrong_source" };
+  }
 
   const signature = tx?.signature;
-  if (!signature || processedSignatures.has(signature)) return false;
+  if (!signature) {
+    console.log(`[ignore] reason=no_signature source=${source}`);
+    return { processed: false, reason: "no_signature" };
+  }
+  if (processedSignatures.has(signature)) {
+    console.log(`[ignore] reason=duplicate_signature sig=${signature.slice(0, 12)}...`);
+    return { processed: false, reason: "duplicate_signature" };
+  }
 
   const platformLabel = source === "MAGIC_EDEN" ? "Magic Eden" : "Tensor";
-  const sale = await buildSaleRecord(tx, platformLabel, source);
-  if (!sale) return false;
+  const { sale, ignoreReason } = await buildSaleRecord(tx, platformLabel, source);
+  if (!sale) {
+    console.log(`[ignore] reason=${ignoreReason} sig=${signature.slice(0, 12)}...`);
+    return { processed: false, reason: ignoreReason };
+  }
 
   processedSignatures.add(signature);
   trimSignatureCache();
 
   await postSaleTweet(sale);
-  return true;
+  return { processed: true, reason: null };
 };
 
 module.exports = async function handler(req, res) {
@@ -230,16 +250,19 @@ module.exports = async function handler(req, res) {
   }
 
   let processed = 0;
+  const ignoreReasons = [];
   for (const tx of events) {
     try {
-      const ok = await processWebhookEvent(tx);
-      if (ok) processed += 1;
+      const result = await processWebhookEvent(tx);
+      if (result.processed) processed += 1;
+      else if (result.reason) ignoreReasons.push(result.reason);
     } catch (error) {
       console.error("Webhook event processing error:", error?.message || error);
+      ignoreReasons.push("error");
     }
   }
 
   const ignored = events.length - processed;
-  console.log(`[webhook] processed=${processed}, ignored=${ignored}`);
-  return res.status(200).json({ received: events.length, processed, ignored });
+  console.log(`[webhook] processed=${processed}, ignored=${ignored}`, ignoreReasons.length ? ignoreReasons : "");
+  return res.status(200).json({ received: events.length, processed, ignored, ignoreReasons });
 };
