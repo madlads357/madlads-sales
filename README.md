@@ -101,4 +101,4 @@ npx vercel dev
 - Helius may retry failed deliveries; the bot deduplicates by transaction signature.
 - Each webhook delivery costs [1 Helius credit](https://helius.dev/docs/faqs/webhooks).
 - Tweet failures are logged but do not fail the webhook response (Helius still gets `200`).
-- If image upload fails, the tweet is skipped (no text-only fallback).
+- Images are resized and compressed to JPEG before upload (Twitter’s 5 MB limit).
